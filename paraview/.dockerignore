@@ -1,0 +1,4 @@
+gcp.env
+README.md
+*.sh
+.gcloudignore

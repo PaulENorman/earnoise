@@ -19,11 +19,13 @@ Usage:
 
 Examples:
   paraview/localLaunchPvServer.sh
-  paraview/localLaunchPvServer.sh motorBike/10AM_21_Jun_21_2026/case
+  paraview/localLaunchPvServer.sh drivAer/b9-steady/4PM_21_Jun_28_2026/case/aerodynamicsDrivAer/aerodynamicsDrivAer
 
 Environment:
   EARNOISE_PARAVIEW_ENV_FILE  Optional config file to source before launch.
   PARAVIEW_PORT           Local and remote pvserver port. Default: 11111
+  BUCKET_CASE_PATH        Optional bucket path under PARAVIEW_CASE_ROOT to sync.
+                          Empty means sync the full bucket root.
   LOCAL_PARAVIEW_APP      Local macOS ParaView app bundle. Default: /Applications/ParaView-<version>.app
 EOF
 }
@@ -96,6 +98,21 @@ ensure_vm_running() {
   bash "$REPO_ROOT/paraview/manageVm.sh" ensure-running
 }
 
+cleanup_remote_results_cache() {
+  local remote_cmd
+
+  remote_cmd='
+results_dir="$HOME/paraview-cases/results"
+if mountpoint -q "$results_dir"; then
+  fusermount3 -u "$results_dir" 2>/dev/null || fusermount -u "$results_dir" 2>/dev/null || true
+fi
+rm -rf "$results_dir"
+'
+
+  log "Cleaning any partial ParaView bucket cache on $PARAVIEW_VM_NAME."
+  ssh_with_retries "$remote_cmd"
+}
+
 copy_bundle_to_vm() {
   log "Uploading source bundle to $PARAVIEW_VM_NAME."
   scp_with_retries \
@@ -115,7 +132,7 @@ start_remote_pvserver() {
   remote_cmd="$(
     cat <<EOF
 bash ~/earnoise-runner/paraview/runPvServerOnVm.sh \
-  --paraview-version $(quote_arg "$PARAVIEW_VERSION") \
+  --image-tag $(quote_arg "$PARAVIEW_IMAGE_TAG") \
   --port $(quote_arg "$PARAVIEW_PORT") \
   --bucket-case-path $(quote_arg "$BUCKET_CASE_PATH") \
   --bucket-root $(quote_arg "$PARAVIEW_CASE_ROOT")
@@ -127,6 +144,7 @@ EOF
 }
 
 verify_remote_pvserver() {
+  local output
   local remote_cmd
 
   remote_cmd='
@@ -143,7 +161,12 @@ fi
 '
 
   log "Verifying pvserver is still running."
-  ssh_with_retries "$remote_cmd" || die "pvserver did not stay up on $PARAVIEW_VM_NAME."
+  output="$(ssh_with_retries "$remote_cmd" 2>&1)" || true
+  printf '%s\n' "$output"
+
+  if [[ "$output" != *"__EARNOISE_PVSERVER_OK__"* ]]; then
+    die "pvserver did not stay up on $PARAVIEW_VM_NAME."
+  fi
 }
 
 launch_local_tunnel() {
@@ -189,6 +212,14 @@ launch_local_paraview() {
 }
 
 print_next_steps() {
+  local remote_case_dir
+
+  if [[ -n "$BUCKET_CASE_PATH" ]]; then
+    remote_case_dir="~/paraview-cases/${BUCKET_CASE_PATH}"
+  else
+    remote_case_dir="~/paraview-cases/results"
+  fi
+
   cat <<EOF
 
 ParaView server is ready.
@@ -197,7 +228,7 @@ ParaView server is ready.
    cs://localhost:${PARAVIEW_PORT}
 
 2. Case files on the VM are under:
-   ~/paraview-cases/${BUCKET_CASE_PATH}
+   ${remote_case_dir}
 
 3. If you need to recreate the tunnel manually, run:
    gcloud compute ssh $PARAVIEW_VM_NAME --project=$GCP_PROJECT --zone=$PARAVIEW_GCP_ZONE -- -N -L ${PARAVIEW_PORT}:localhost:${PARAVIEW_PORT}
@@ -226,13 +257,18 @@ main() {
   PARAVIEW_GCP_ZONE="${PARAVIEW_GCP_ZONE:-us-central1-a}"
   PARAVIEW_VM_NAME="${PARAVIEW_VM_NAME:-paraview-viewer}"
   PARAVIEW_VERSION="${PARAVIEW_VERSION:-6.1.1}"
+  ARTIFACT_REGISTRY_LOCATION="${ARTIFACT_REGISTRY_LOCATION:-us-central1}"
+  ARTIFACT_REGISTRY_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-your-docker-repo}"
+  PARAVIEW_IMAGE_NAME="${PARAVIEW_IMAGE_NAME:-paraview-pvserver}"
+  PARAVIEW_IMAGE_TAG="${PARAVIEW_IMAGE_TAG:-${ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${PARAVIEW_IMAGE_NAME}:v${PARAVIEW_VERSION}}"
   PARAVIEW_PORT="${PARAVIEW_PORT:-11111}"
   PARAVIEW_CASE_ROOT="${PARAVIEW_CASE_ROOT:-gs://your-results-bucket}"
   LOCAL_PARAVIEW_APP="${LOCAL_PARAVIEW_APP:-/Applications/ParaView-${PARAVIEW_VERSION}.app}"
-  BUCKET_CASE_PATH="${1:-motorBike/10AM_21_Jun_21_2026/case}"
+  BUCKET_CASE_PATH="${1:-${BUCKET_CASE_PATH:-}}"
 
   [[ -n "$GCP_PROJECT" ]] || die "GCP_PROJECT is not set and no default gcloud project was found."
   [[ "$PARAVIEW_CASE_ROOT" != "gs://your-results-bucket" ]] || die "Set PARAVIEW_CASE_ROOT in paraview/gcp.env before launching."
+  [[ "$ARTIFACT_REGISTRY_REPOSITORY" != "your-docker-repo" ]] || die "Set ARTIFACT_REGISTRY_REPOSITORY in paraview/gcp.env before launching."
 
   REMOTE_BUNDLE_NAME="earnoise-paraview-source.tgz"
   SOURCE_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/earnoise-paraview-source-XXXXXX.tgz")"
@@ -246,6 +282,7 @@ main() {
     .
 
   ensure_vm_running
+  cleanup_remote_results_cache
   copy_bundle_to_vm
   prepare_remote_repo
   start_remote_pvserver

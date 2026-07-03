@@ -7,18 +7,20 @@ log() {
   printf '[runMotorBikeInContainer] %s\n' "$*" >&2
 }
 
+die() {
+  printf '[runMotorBikeInContainer] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
 RUN_ID="${1:?run id is required}"
 CASE_NAME="${2:-motorBike}"
 CASE_CPUS="${3:?case cpu count is required}"
-TUTORIAL_RELATIVE_PATH="${4:-incompressible/simpleFoam/motorBike}"
+TUTORIAL_RELATIVE_PATH="${TUTORIAL_RELATIVE_PATH:-incompressible/simpleFoam/motorBike}"
 RUNS_ROOT="/runs"
 CASE_RUN_DIR="$RUNS_ROOT/$RUN_ID/$CASE_NAME"
 DECOMP_DICT="system/decomposeParDict.localLaunch"
 
-[[ -n "${WM_PROJECT_DIR:-}" ]] || {
-  printf '[runMotorBikeInContainer] ERROR: OpenFOAM environment is not loaded.\n' >&2
-  exit 1
-}
+[[ -n "${WM_PROJECT_DIR:-}" ]] || die "OpenFOAM environment is not loaded."
 
 . "${WM_PROJECT_DIR:?}/bin/tools/RunFunctions"
 
@@ -33,7 +35,7 @@ cat > "$DECOMP_DICT" <<EOF
 /*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
 | \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\\\    /   O peration     | Version:  v2506                                 |
+|  \\\\    /   O peration     | Version:  v${WM_PROJECT_VERSION}                |
 |   \\\\  /    A nd           | Website:  www.openfoam.com                      |
 |    \\\\/     M anipulation  |                                                 |
 \\*---------------------------------------------------------------------------*/

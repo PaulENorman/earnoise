@@ -84,5 +84,5 @@ Planned one-command flow:
 
 ## Next Notes
 
-- [gcp-scaleout-notes.md](/Users/paulnorman/Desktop/earnoise/earnoise/docs/gcp-scaleout-notes.md) covers the next storage and remote-ParaView steps:
+- [gcp-scaleout-notes.md](gcp-scaleout-notes.md) covers the next storage and remote-ParaView steps:
   VM-native bucket uploads and a `pvserver`-based viewing path.

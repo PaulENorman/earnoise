@@ -26,6 +26,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+is_capacity_error() {
+  [[ "$1" == *"ZONE_RESOURCE_POOL_EXHAUSTED"* || "$1" == *"does not have enough resources"* ]]
+}
+
+explain_capacity_error() {
+  cat >&2 <<EOF
+[cfd/manageVm] GCP does not currently have enough ${GCP_VM_MACHINE_TYPE} capacity in ${GCP_ZONE}.
+[cfd/manageVm] This is zone capacity exhaustion, not necessarily a project quota problem.
+[cfd/manageVm] A stopped VM cannot be moved to another zone. Set GCP_ZONE to another zone and use a new GCP_VM_NAME, or delete and recreate the compute VM in another zone.
+EOF
+}
+
 load_config() {
   local config_file
   local project_number
@@ -74,13 +86,15 @@ instance_status() {
 }
 
 create_instance() {
+  local output
+
   if instance_exists; then
     log "VM $GCP_VM_NAME already exists."
     return 0
   fi
 
   log "Creating VM $GCP_VM_NAME in $GCP_ZONE."
-  gcloud compute instances create "$GCP_VM_NAME" \
+  if ! output="$(gcloud compute instances create "$GCP_VM_NAME" \
     --project="$GCP_PROJECT" \
     --zone="$GCP_ZONE" \
     --machine-type="$GCP_VM_MACHINE_TYPE" \
@@ -89,10 +103,19 @@ create_instance() {
     --image-family="$GCP_VM_IMAGE_FAMILY" \
     --image-project="$GCP_VM_IMAGE_PROJECT" \
     --service-account="$GCP_VM_SERVICE_ACCOUNT" \
-    --scopes="$GCP_VM_SCOPES"
+    --scopes="$GCP_VM_SCOPES" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    if is_capacity_error "$output"; then
+      explain_capacity_error
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$output"
 }
 
 start_instance() {
+  local output
   local status
 
   status="$(instance_status)"
@@ -105,9 +128,17 @@ start_instance() {
       ;;
     TERMINATED|STOPPED)
       log "Starting VM $GCP_VM_NAME."
-      gcloud compute instances start "$GCP_VM_NAME" \
+      if ! output="$(gcloud compute instances start "$GCP_VM_NAME" \
         --project="$GCP_PROJECT" \
-        --zone="$GCP_ZONE"
+        --zone="$GCP_ZONE" 2>&1)"; then
+        printf '%s\n' "$output" >&2
+        if is_capacity_error "$output"; then
+          explain_capacity_error
+        fi
+        return 1
+      fi
+
+      printf '%s\n' "$output"
       ;;
     *)
       die "VM $GCP_VM_NAME is in unexpected state: $status"

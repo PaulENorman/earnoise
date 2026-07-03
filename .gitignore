@@ -6,6 +6,7 @@
 .env.*
 !.env.example
 **/gcp.env
+cfd/cases/drivAerB9.env
 .envrc
 .direnv/
 .gcloud/
@@ -42,6 +43,12 @@ terraform.tfvars.json
 *.tfstate
 *.tfstate.*
 .terraform/
+doi-*.zip
+B9_*.tgz
+README-B9.pdf
+third_party/*
+!third_party/.gitkeep
+!third_party/README.md
 
 # Local run artifacts
 artifacts/

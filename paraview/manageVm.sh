@@ -26,6 +26,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+is_capacity_error() {
+  [[ "$1" == *"ZONE_RESOURCE_POOL_EXHAUSTED"* || "$1" == *"does not have enough resources"* ]]
+}
+
+explain_capacity_error() {
+  cat >&2 <<EOF
+[paraview/manageVm] GCP does not currently have enough ${PARAVIEW_VM_MACHINE_TYPE} capacity in ${PARAVIEW_GCP_ZONE}.
+[paraview/manageVm] This is zone capacity exhaustion, not necessarily a project quota problem.
+[paraview/manageVm] A stopped VM cannot be moved to another zone. For a disposable viewer VM, set PARAVIEW_GCP_ZONE to another zone and use a new PARAVIEW_VM_NAME, or delete and recreate the viewer VM in another zone.
+EOF
+}
+
 load_config() {
   local config_file
   local project_number
@@ -74,13 +86,15 @@ instance_status() {
 }
 
 create_instance() {
+  local output
+
   if instance_exists; then
     log "VM $PARAVIEW_VM_NAME already exists."
     return 0
   fi
 
   log "Creating VM $PARAVIEW_VM_NAME in $PARAVIEW_GCP_ZONE."
-  gcloud compute instances create "$PARAVIEW_VM_NAME" \
+  if ! output="$(gcloud compute instances create "$PARAVIEW_VM_NAME" \
     --project="$GCP_PROJECT" \
     --zone="$PARAVIEW_GCP_ZONE" \
     --machine-type="$PARAVIEW_VM_MACHINE_TYPE" \
@@ -89,10 +103,19 @@ create_instance() {
     --image-family="$PARAVIEW_VM_IMAGE_FAMILY" \
     --image-project="$PARAVIEW_VM_IMAGE_PROJECT" \
     --service-account="$PARAVIEW_VM_SERVICE_ACCOUNT" \
-    --scopes="$PARAVIEW_VM_SCOPES"
+    --scopes="$PARAVIEW_VM_SCOPES" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    if is_capacity_error "$output"; then
+      explain_capacity_error
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$output"
 }
 
 start_instance() {
+  local output
   local status
 
   status="$(instance_status)"
@@ -105,9 +128,17 @@ start_instance() {
       ;;
     TERMINATED|STOPPED)
       log "Starting VM $PARAVIEW_VM_NAME."
-      gcloud compute instances start "$PARAVIEW_VM_NAME" \
+      if ! output="$(gcloud compute instances start "$PARAVIEW_VM_NAME" \
         --project="$GCP_PROJECT" \
-        --zone="$PARAVIEW_GCP_ZONE"
+        --zone="$PARAVIEW_GCP_ZONE" 2>&1)"; then
+        printf '%s\n' "$output" >&2
+        if is_capacity_error "$output"; then
+          explain_capacity_error
+        fi
+        return 1
+      fi
+
+      printf '%s\n' "$output"
       ;;
     *)
       die "VM $PARAVIEW_VM_NAME is in unexpected state: $status"

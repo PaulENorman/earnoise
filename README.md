@@ -2,7 +2,7 @@
 
 Reproducible CFD workflow for running OpenFOAM cases on GCP with Docker and pushing results to Google Cloud Storage.
 
-The first baseline in this repo is the OpenFOAM.com / OpenCFD / Keysight line, pinned to `v2506` on Ubuntu 24.04.
+The current CFD baseline is the OpenFOAM.com / OpenCFD / Keysight line, now targeting `v2306` on Ubuntu 24.04 so it matches the exaFOAM DrivAer B9 benchmark.
 
 ## Repo Layout
 
@@ -26,8 +26,8 @@ GitHub
 
 Immediate focus:
 
-1. Keep the motorBike path stable on OpenFOAM.com `v2506`.
-2. Add a second case family beside motorBike, starting with a human-head workflow.
+1. Keep the motorBike tutorial path stable on OpenFOAM.com `v2306`.
+2. Add a second case family beside motorBike, starting with a reduced steady-state DrivAer B9 workflow.
 3. Keep the GCP launch path reproducible without committing account-linked config or credentials.
 4. Decide how disposable the ParaView viewer VM should be between sessions.
 
@@ -36,13 +36,13 @@ Immediate focus:
 Build the image:
 
 ```bash
-docker build -t earnoise-openfoam:v2506 .
+docker build -t earnoise-openfoam:v2306 .
 ```
 
 Start an interactive shell with the repo's case directory mounted into the container:
 
 ```bash
-docker run --rm -it -v "$PWD/cases:/cases" earnoise-openfoam:v2506
+docker run --rm -it -v "$PWD/cases:/cases" earnoise-openfoam:v2306
 ```
 
 Inside the container, OpenFOAM should already be sourced for interactive shells. Useful checks:
@@ -56,10 +56,30 @@ mpirun --version
 Submit a case to GCP with the local machine acting only as the orchestrator:
 
 ```bash
-bash cfd/localLaunchMotorBike.sh
+EARNOISE_CFD_CASE_ENV_FILE=cfd/cases/motorBike.env bash cfd/localLaunchCase.sh
 ```
 
-The current launcher reads platform defaults from a local ignored `cfd/gcp.env`, case defaults from `cfd/cases/motorBike.env`, builds a fresh `motorBike` case from the OpenFOAM.com `simpleFoam` tutorial on the VM, then uploads a manifest, a full archive, and a lighter reconstructed case directory directly from the VM to Cloud Storage.
+The generic CFD launcher reads platform defaults from a local ignored `cfd/gcp.env`, case defaults from a case profile in `cfd/cases/`, runs the selected in-container case script on the VM, then uploads a manifest, a full archive, and a lighter reconstructed case directory directly from the VM to Cloud Storage.
+
+To launch the reduced DrivAer B9 starter, copy the case template and point `CASE_INPUT_GCS_URI` at the DaRUS zip staged in your case-inputs bucket. `CASE_INPUT_FILE` remains available as a one-off local upload fallback.
+
+```bash
+cp cfd/cases/drivAerB9.env.example cfd/cases/drivAerB9.env
+EARNOISE_CFD_CASE_ENV_FILE=cfd/cases/drivAerB9.env bash cfd/localLaunchCase.sh
+```
+
+Publish the CFD image to Artifact Registry with Cloud Build:
+
+```bash
+bash cfd/setupArtifactRegistry.sh
+bash cfd/publishImage.sh
+```
+
+Publish the ParaView server image to Artifact Registry with Cloud Build:
+
+```bash
+bash paraview/publishImage.sh
+```
 
 To set up local machine-specific config, copy:
 
@@ -81,8 +101,8 @@ bash paraview/manageVm.sh stop
 
 - Do not store service-account JSON files, SSH keys, local `gcp.env` files, or `.env` files in this repo.
 - The long-term plan is to use a VM-attached GCP service account instead of committed keys.
-- `.gitignore`, `.gcpignore`, and `.dockerignore` are set up to reduce accidental leakage of local secrets, account-linked config, and bulky CFD outputs.
+- `.gitignore`, `.gcpignore`, `.gcloudignore`, and `.dockerignore` are set up to reduce accidental leakage of local secrets, account-linked config, and bulky CFD outputs.
 
 ## Next Step
 
-The next layer is adding the first non-motorBike case path while keeping the current CFD and ParaView launchers disposable, reproducible, and free of committed credentials.
+The next layer is tuning the reduced DrivAer starter so it fits the current VM envelope, then using that as the base for future head and aeroacoustic workflows.
