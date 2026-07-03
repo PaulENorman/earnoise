@@ -101,12 +101,13 @@ ensure_vm_running() {
 cleanup_remote_results_cache() {
   local remote_cmd
 
-  remote_cmd='
+remote_cmd='
+case_root="$HOME/paraview-cases"
 results_dir="$HOME/paraview-cases/results"
 if mountpoint -q "$results_dir"; then
   fusermount3 -u "$results_dir" 2>/dev/null || fusermount -u "$results_dir" 2>/dev/null || true
 fi
-rm -rf "$results_dir"
+rm -rf "$case_root"
 '
 
   log "Cleaning any partial ParaView bucket cache on $PARAVIEW_VM_NAME."

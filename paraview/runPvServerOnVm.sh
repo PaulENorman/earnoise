@@ -114,14 +114,33 @@ ensure_gcsfuse_cmd() {
   command -v gcsfuse >/dev/null 2>&1 || die "gcsfuse is not available on the VM."
 }
 
+enable_fuse_allow_other() {
+  if [[ -f /etc/fuse.conf ]] && grep -Eq '^[[:space:]]*user_allow_other[[:space:]]*$' /etc/fuse.conf; then
+    return
+  fi
+
+  log "Enabling FUSE allow_other for Docker access to bucket mounts."
+  printf 'user_allow_other\n' | sudo tee -a /etc/fuse.conf >/dev/null
+}
+
 cleanup_previous_results_cache() {
-  local results_dir="$HOME/paraview-cases/results"
+  local case_root="$HOME/paraview-cases"
+  local results_dir="$case_root/results"
 
   if mountpoint -q "$results_dir"; then
     fusermount3 -u "$results_dir" 2>/dev/null || fusermount -u "$results_dir" 2>/dev/null || true
   fi
 
-  rm -rf "$results_dir"
+  rm -rf "$case_root"
+}
+
+cleanup_docker_runtime() {
+  local container_name="earnoise-pvserver"
+
+  log "Cleaning old ParaView containers and image layers before pull."
+  "${DOCKER_CMD[@]}" rm -f "$container_name" >/dev/null 2>&1 || true
+  "${DOCKER_CMD[@]}" image rm -f "$PARAVIEW_IMAGE_TAG" >/dev/null 2>&1 || true
+  "${DOCKER_CMD[@]}" system prune -af >/dev/null 2>&1 || true
 }
 
 pull_paraview_image() {
@@ -134,7 +153,11 @@ pull_paraview_image() {
     --password-stdin "https://${registry_host}" >/dev/null
 
   log "Pulling ParaView image ${PARAVIEW_IMAGE_TAG}."
-  "${DOCKER_CMD[@]}" pull "${PARAVIEW_IMAGE_TAG}"
+  if ! "${DOCKER_CMD[@]}" pull "${PARAVIEW_IMAGE_TAG}"; then
+    log "Initial pull failed; pruning Docker storage and retrying once."
+    cleanup_docker_runtime
+    "${DOCKER_CMD[@]}" pull "${PARAVIEW_IMAGE_TAG}"
+  fi
 }
 
 parse_gcs_uri() {
@@ -177,9 +200,9 @@ mount_case_bucket() {
   mkdir -p "$CASE_DIR"
 
   if [[ -n "$only_dir" ]]; then
-    gcsfuse --implicit-dirs --file-mode 0644 --dir-mode 0755 --only-dir "$only_dir" "$GCS_BUCKET" "$CASE_DIR"
+    gcsfuse --implicit-dirs -o allow_other --file-mode 0644 --dir-mode 0755 --only-dir "$only_dir" "$GCS_BUCKET" "$CASE_DIR"
   else
-    gcsfuse --implicit-dirs --file-mode 0644 --dir-mode 0755 "$GCS_BUCKET" "$CASE_DIR"
+    gcsfuse --implicit-dirs -o allow_other --file-mode 0644 --dir-mode 0755 "$GCS_BUCKET" "$CASE_DIR"
   fi
 }
 
@@ -222,7 +245,9 @@ start_pvserver() {
   nohup "${DOCKER_CMD[@]}" run --rm \
     --name "${container_name}" \
     --network host \
-    -v "${CASE_ROOT}:/cases" \
+    --mount "type=bind,source=${CASE_ROOT},target=/cases" \
+    -e LIBGL_ALWAYS_SOFTWARE=1 \
+    -e VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow \
     -w /tmp \
     "${PARAVIEW_IMAGE_TAG}" \
     pvserver --server-port="${PARAVIEW_PORT}" \
@@ -256,6 +281,8 @@ main() {
   cleanup_previous_results_cache
   ensure_docker_cmd
   ensure_gcsfuse_cmd
+  enable_fuse_allow_other
+  cleanup_docker_runtime
   pull_paraview_image
   mount_case_bucket
   prepare_foam_markers

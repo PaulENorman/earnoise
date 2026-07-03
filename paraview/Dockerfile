@@ -15,10 +15,13 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    libegl1 \
     libgl1 \
+    libgl1-mesa-dri \
     libglib2.0-0 \
     libglu1-mesa \
     libgomp1 \
+    libosmesa6 \
     libsm6 \
     libxcursor1 \
     libxext6 \
